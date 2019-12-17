@@ -1,0 +1,59 @@
+#!/bin/bash
+
+asana_token=""
+
+if [ "$asana_token" == "" ]; then
+  echo "No token given" >&2
+  exit 1
+fi
+
+# get last commit message
+commit_message=$(git log --pretty=format:"%B" -n1 | tr '\n' ' ')
+
+# regex pattern to recognize a story number
+task_identifier_pattern='#([0-9]*)'
+
+# break the commit message down into words
+IFS=' ' read -a words <<<"$commit_message"
+
+# find task identifier in words
+task_identifier=null
+for element in "${words[@]}"; do
+  # save task identifier
+  if [[ "$element" =~ $task_identifier_pattern ]]; then
+    task_identifier=$element
+  fi
+done
+
+# generate the post data for asana api
+generate_post_data() {
+  cat <<EOF
+{
+  "data": {
+    "task": "$task_identifier",
+    "text": "$commit_message"
+  }
+}
+EOF
+}
+
+# remove hash '#' from identifier
+cleaned_task_identifier=$(echo $task_identifier | sed 's/\#//g')
+
+# write commit message to ticket
+http_code=$(
+  curl \
+    -sw '%{http_code}' \
+    -H "Authorization: Bearer ${asana_token}" \
+    -H "Accept: application/json" \
+    -H "Content-Type: application/json" \
+    -X POST \
+    --data "$(generate_post_data)" \
+    "https://app.asana.com/api/1.0/tasks/${cleaned_task_identifier}/stories" \
+    -o /dev/null 2>&1)
+
+if [ "$http_code" = "201" ]; then
+  echo "Successfully wrote comment for task $cleaned_task_identifier"
+else
+  echo "Error for task $cleaned_task_identifier. HTTP return code: $http_code"
+fi
